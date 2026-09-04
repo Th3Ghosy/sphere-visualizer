@@ -14,6 +14,12 @@ A fullscreen 3D OpenGL particle sphere that reacts to your desktop audio in real
 - 900 glowing dots connected to their nearest neighbors
 - Fullscreen with scroll-to-zoom
 
+## Screenshots
+
+![Sphere view 1](screenshots/screenshot_1.png)
+![Sphere view 2](screenshots/screenshot_2.png)
+![Sphere view 3](screenshots/screenshot_3.png)
+
 ## Requirements
 
 - Windows (uses WASAPI loopback capture)

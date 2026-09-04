@@ -5,8 +5,11 @@ from OpenGL.GLU import *
 import math
 import random
 import struct
+import sys
+import os
 import pyaudiowpatch as pyaudio
 import threading
+from PIL import Image
 
 NUM_BALLS = 500
 BASE_RADIUS = 2.0
@@ -91,13 +94,18 @@ def compute_edges(points):
     return list(edges)
 
 
-def main():
+def main(screenshot=False):
     global audio_level
 
     pygame.init()
-    disp_info = pygame.display.Info()
-    w, h = disp_info.current_w, disp_info.current_h
-    screen = pygame.display.set_mode((w, h), DOUBLEBUF | OPENGL | FULLSCREEN)
+    if screenshot:
+        w, h = 1280, 720
+        flags = DOUBLEBUF | OPENGL
+    else:
+        disp_info = pygame.display.Info()
+        w, h = disp_info.current_w, disp_info.current_h
+        flags = DOUBLEBUF | OPENGL | FULLSCREEN
+    screen = pygame.display.set_mode((w, h), flags)
     pygame.display.set_caption("3D Particle Sphere")
     clock = pygame.time.Clock()
 
@@ -125,19 +133,20 @@ def main():
 
     p = pyaudio.PyAudio()
     loopback = find_loopback(p)
-    if loopback is None:
+    if loopback is None and not screenshot:
         print("No loopback device found")
         p.terminate()
         pygame.quit()
         return
 
-    rate = int(loopback["defaultSampleRate"])
-    channels = int(loopback["maxInputChannels"])
-    print("Desktop audio: " + loopback["name"] + " (" + str(rate) + "Hz, " + str(channels) + "ch)")
-
-    stream = p.open(format=pyaudio.paFloat32, channels=channels, rate=rate,
-                    input=True, input_device_index=loopback["index"],
-                    frames_per_buffer=BLOCKSIZE)
+    stream = None
+    if loopback is not None:
+        rate = int(loopback["defaultSampleRate"])
+        channels = int(loopback["maxInputChannels"])
+        print("Desktop audio: " + loopback["name"] + " (" + str(rate) + "Hz, " + str(channels) + "ch)")
+        stream = p.open(format=pyaudio.paFloat32, channels=channels, rate=rate,
+                        input=True, input_device_index=loopback["index"],
+                        frames_per_buffer=BLOCKSIZE)
 
     ax = 0.0
     ay = 0.0
@@ -153,6 +162,11 @@ def main():
     pulse_phase = 0.0
     base_speed_x = 0.01
     base_speed_y = 0.015
+    frame_idx = 0
+    screen_shot_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screenshots")
+    shots_taken = []
+    if screenshot:
+        os.makedirs(screen_shot_dir, exist_ok=True)
 
     dot_layers = [
         (12.0, 0.03), (6.0, 0.08), (3.0, 0.18), (1.5, 0.45), (0.8, 1.0),
@@ -206,32 +220,39 @@ def main():
         beat = 0.0
         bass = 0.0
         try:
-            raw = stream.read(BLOCKSIZE)
-            n = min(len(raw) // 4, BLOCKSIZE)
-            data = struct.unpack_from('f' * n, raw, 0)
-            dot = 0.0
-            for v in data:
-                dot += v * v
-            target_vol = min(1.0, math.sqrt(dot / max(n, 1)) * 15.0)
+            if stream is None and screenshot:
+                # synthetic stimulus so the sphere renders alive
+                tnow = frame_idx * 0.016
+                synth = 0.5 + 0.5 * math.sin(tnow * 2.1)
+                bass = 0.3 + 0.6 * max(0.0, math.sin(tnow * 1.4)) ** 2
+                target_vol = synth * 0.4
+            else:
+                raw = stream.read(BLOCKSIZE)
+                n = min(len(raw) // 4, BLOCKSIZE)
+                data = struct.unpack_from('f' * n, raw, 0)
+                dot = 0.0
+                for v in data:
+                    dot += v * v
+                target_vol = min(1.0, math.sqrt(dot / max(n, 1)) * 15.0)
 
-            # frequency analysis for beat/bass detection using DFT over small window
-            num_bins = 64
-            bass_sum = 0.0
-            for j in range(1, num_bins + 1):
-                re = 0.0
-                im = 0.0
-                step = j * 2.0 * math.pi / n
-                for k in range(0, n, 4):
-                    v = data[k]
-                    ph = step * k
-                    re += v * math.cos(ph)
-                    im -= v * math.sin(ph)
-                mag = (re * re + im * im)
-                if j <= 6:
-                    bass_sum += mag
-                else:
-                    bass_sum += mag * 0.2
-            bass = min(1.0, math.sqrt(bass_sum / (num_bins * n)) * 25.0)
+                # frequency analysis for beat/bass detection using DFT over small window
+                num_bins = 64
+                bass_sum = 0.0
+                for j in range(1, num_bins + 1):
+                    re = 0.0
+                    im = 0.0
+                    step = j * 2.0 * math.pi / n
+                    for k in range(0, n, 4):
+                        v = data[k]
+                        ph = step * k
+                        re += v * math.cos(ph)
+                        im -= v * math.sin(ph)
+                    mag = (re * re + im * im)
+                    if j <= 6:
+                        bass_sum += mag
+                    else:
+                        bass_sum += mag * 0.2
+                bass = min(1.0, math.sqrt(bass_sum / (num_bins * n)) * 25.0)
         except Exception:
             pass
 
@@ -327,13 +348,30 @@ def main():
 
         glDepthMask(GL_TRUE)
         pygame.display.flip()
+
+        if screenshot:
+            if frame_idx >= 20 and frame_idx % 30 == 0 and len(shots_taken) < 3:
+                glReadBuffer(GL_FRONT)
+                buf = glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE)
+                img = Image.frombuffer("RGBA", (w, h), buf)
+                img = img.transpose(Image.FLIP_TOP_BOTTOM)
+                name = os.path.join(screen_shot_dir, "screenshot_%d.png" % (len(shots_taken) + 1))
+                img.save(name)
+                shots_taken.append(name)
+                print("Saved " + name)
+
+        frame_idx += 1
         clock.tick(60)
 
-    stream.stop_stream()
-    stream.close()
+        if screenshot and len(shots_taken) >= 3:
+            running = False
+
+    if stream is not None:
+        stream.stop_stream()
+        stream.close()
     p.terminate()
     pygame.quit()
 
 
 if __name__ == "__main__":
-    main()
+    main(screenshot="--screenshot" in sys.argv)
