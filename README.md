@@ -25,6 +25,10 @@ A fullscreen 3D OpenGL particle sphere that reacts to your desktop audio in real
 - Windows (uses WASAPI loopback capture)
 - Python 3.14+
 
+## Download
+
+Grab the latest `SphereVisualizer.exe` from the [Releases page](https://github.com/Th3Ghosy/sphere-visualizer/releases) — no Python install needed, just download and run.
+
 ## Installation
 
 ```bash
